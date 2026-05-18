@@ -84,19 +84,28 @@ if __name__ == "__main__":
     if not mslx_files:
         print("Файлы .mslx не найдены.")
     else:
+        # === НОВАЯ ЛОГИКА СОХРАНЕНИЯ ===
+        # Создаем новую папку внутри целевой директории
+        output_folder = target_dir / "Cleaned_Markdown"
+        
+        # exist_ok=True означает, что скрипт не выдаст ошибку, если папка уже существует
+        output_folder.mkdir(parents=True, exist_ok=True) 
+
         print(f"Найдено файлов: {len(mslx_files)}. Начинаю обработку...")
+        print(f"Все результаты будут сохранены в: {output_folder}\n")
         
         for mslx_file in mslx_files:
             # Парсим файл
             markdown_content = parse_mslx_to_markdown(mslx_file)
             
-            # Формируем путь для сохранения (тот же путь, но расширение .md)
-            output_md_file = mslx_file.with_suffix('.md')
+            # Формируем путь для сохранения в НОВОЙ папке (берем только имя файла + .md)
+            output_md_file = output_folder / f"{mslx_file.stem}.md"
             
-            # Сохраняем в той же папке
+            # Сохраняем файл
             with open(output_md_file, "w", encoding="utf-8") as f:
                 f.write(markdown_content)
                 
             print(f"Конвертирован: {mslx_file.name} -> {output_md_file.name}")
             
         print("\nКонвертация успешно завершена!")
+        print(f"Ваши очищенные файлы лежат здесь: {output_folder}")
