@@ -1,26 +1,41 @@
-import json
-# ВАЖНО: Замените "mcp_server" на то имя файла, где у вас лежит код сервера (без .py)
-from server import semantic_search_syntax 
+import os
+from dotenv import load_dotenv
+from langchain_openai import OpenAIEmbeddings
+from langchain_qdrant import QdrantVectorStore
 
-def test_my_rag():
-    # Наш тестовый запрос
-    test_query = "как работать с табличной частью документа, добавление строк, схлопывание по ключевым полям"
-    print(f"🔍 Запускаем поиск по запросу: '{test_query}'\n")
-    print("⏳ Ждем ответ от Ollama и Qdrant...\n")
+# 1. Загружаем ключи
+load_dotenv()
+api_key = os.getenv("OPENROUTER_API_KEY", "")
 
-    # Вызываем функцию точно так же, как это сделал бы ИИ
-    result_string = semantic_search_syntax(test_query, n_results=3)
+print("🔍 Подключаемся к базе Qdrant...")
 
-    # Пытаемся красиво вывести JSON
-    try:
-        # Если вернулся правильный JSON с результатами
-        parsed_data = json.loads(result_string)
-        print("✅ УСПЕХ! Вот что нашла база данных:")
-        print(json.dumps(parsed_data, indent=2, ensure_ascii=False))
-    except json.JSONDecodeError:
-        # Если вернулась строка с ошибкой (например "Ошибка локальной модели...")
-        print("❌ ПРОИЗОШЛА ОШИБКА В ФУНКЦИИ:")
-        print(result_string)
+# 2. Инициализируем ту же модель эмбеддингов
+embeddings = OpenAIEmbeddings(
+    openai_api_key=api_key,
+    openai_api_base="https://openrouter.ai/api/v1",
+    model="baai/bge-m3"
+)
 
-if __name__ == "__main__":
-    test_my_rag()
+# 3. Подключаемся к коллекции
+qdrant = QdrantVectorStore.from_existing_collection(
+    embedding=embeddings,
+    collection_name="mobilesmarts_knowledge",
+    url="http://localhost:6333",
+    prefer_grpc=False
+)
+
+# 4. ДЕЛАЕМ ПРЯМОЙ ПОИСК (Как обычный SELECT в SQL)
+query = "Код и логика операции ОснПроцесс"
+print(f"\nИщем строку: '{query}'\n")
+
+# Просим базу выдать 5 самых близких результатов без всякой фильтрации
+results = qdrant.similarity_search(query, k=5)
+
+if not results:
+    print("❌ База пуста или ничего не найдено!")
+else:
+    for i, doc in enumerate(results):
+        file_name = doc.metadata.get('source', 'Unknown').split('\\')[-1].split('/')[-1]
+        print(f"--- Результат {i+1} (из {file_name}) ---")
+        # Печатаем первые 300 символов, чтобы не засорять экран
+        print(doc.page_content[:300] + "...\n")

@@ -26,7 +26,10 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
-# Мы временно отключили ContextualCompressionRetriever и FlashRank для стабильности
+from langchain_classic.retrievers.contextual_compression import ContextualCompressionRetriever
+from langchain_community.document_compressors.flashrank_rerank import FlashrankRerank
+from langchain_classic.retrievers import EnsembleRetriever
+from langchain_community.retrievers import BM25Retriever
 
 # --- Вспомогательные функции ---
 def get_active_models(base_url: str):
@@ -86,6 +89,9 @@ with st.sidebar:
     # Мы убираем выбор локальных моделей и жестко фиксируем лучшую
     or_api_key = st.text_input("OpenRouter API Key (для векторов)", type="password", value=os.getenv("OPENROUTER_API_KEY", ""))
     embed_model_name = "baai/bge-m3"
+
+    st.subheader("3. Индексация базы")
+    data_dir_input = st.text_input("Путь к чистым .md файлам", value=str())
     
     # КНОПКА ИНИЦИАЛИЗАЦИИ
     st.markdown("---")
@@ -116,24 +122,53 @@ with st.sidebar:
                     prefer_grpc=False
                 )
                 
-                # Обычный быстрый ретривер (без капризного FlashRank)
-                retriever = qdrant.as_retriever(search_kwargs={"k": 5})
+                # 1. Векторный поиск Qdrant (Поиск по смыслу)
+                qdrant_retriever = qdrant.as_retriever(search_kwargs={"k": 7}) # Берем 7 кусков
+                
+                # 2. Поднимаем лексический поиск BM25 (Точные совпадения)
+                target_dir = Path(data_dir_input) 
+                loader = DirectoryLoader(str(target_dir), glob="**/*.md", loader_cls=TextLoader, loader_kwargs={'encoding': 'utf-8'})
+                docs_for_bm25 = loader.load()
+                
+                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200, separators=["## Блок:", "\n\n", "\n", " "])
+                chunks = text_splitter.split_documents(docs_for_bm25)
+                
+                # Вшиваем имя файла для надежности (как обсуждали ранее)
+                for chunk in chunks:
+                    file_name = Path(chunk.metadata.get('source', 'Unknown')).name
+                    chunk.page_content = f"Файл_источник: {file_name}\n" + chunk.page_content
+                    
+                bm25_retriever = BM25Retriever.from_documents(chunks)
+                bm25_retriever.k = 7 # Берем 7 кусков
+                
+                # 3. ГИБРИДНЫЙ ПОИСК (70% доверия точным словам, 30% смыслу)
+                hybrid_retriever = EnsembleRetriever(
+                    retrievers=[bm25_retriever, qdrant_retriever], 
+                    weights=[0.7, 0.3] 
+                )
+                
+                # 4. ОТКЛЮЧАЕМ FLASHRANK (Комментируем эти строки)
+                # compressor = FlashrankRerank()
+                # retriever = ContextualCompressionRetriever(
+                #     base_compressor=compressor, 
+                #     base_retriever=hybrid_retriever
+                # )
                 
                 prompt_template = ChatPromptTemplate.from_messages([
                     ("system", sys_prompt_text),
                     ("human", "{input}"),
                 ])
-                qa_chain = create_stuff_documents_chain(llm, prompt_template)
                 
-                st.session_state['retriever'] = retriever
+                # 5. ПЕРЕДАЕМ ЧИСТЫЙ ГИБРИД НАПРЯМУЮ
+                qa_chain = create_stuff_documents_chain(llm, prompt_template)
+                st.session_state['retriever'] = hybrid_retriever # <--- ИЗМЕНЕНО
                 st.session_state['qa_chain'] = qa_chain
                 st.session_state['system_ready'] = True
                 st.success("✅ Система готова к работе!")
             except Exception as e:
                 st.error(f"Ошибка запуска: {e}")
 
-    st.subheader("3. Индексация базы")
-    data_dir_input = st.text_input("Путь к чистым .md файлам", value=str(Path.cwd() / "Cleaned_Markdown"))
+    
     if st.button("🔄 Индексировать базу", use_container_width=True):
         target_dir = Path(data_dir_input)
         if not target_dir.exists():
@@ -185,9 +220,24 @@ if prompt := st.chat_input("Спросите что-нибудь о базе Mob
                     retriever = st.session_state['retriever']
                     qa_chain = st.session_state['qa_chain']
                     
+                    # 1. Сначала достаем документы из базы
                     docs = retriever.invoke(search_query)
+                    
+                    # === ДОБАВЛЯЕМ "РЕНТГЕН" В ИНТЕРФЕЙС ===
+                    with st.expander("🔍 Что нашла база данных (Контекст для ИИ)"):
+                        if not docs:
+                            st.warning("База данных ничего не нашла по этому запросу!")
+                        else:
+                            for i, doc in enumerate(docs):
+                                source_file = Path(doc.metadata.get('source', 'Unknown')).name
+                                st.markdown(f"**Фрагмент {i+1} (из файла: `{source_file}`):**")
+                                st.code(doc.page_content, language="csharp")
+                    # =======================================
+                    
+                    # 2. Передаем документы нейросети для ответа
                     answer = qa_chain.invoke({"context": docs, "input": prompt})
                     
+                    # 3. Выводим ответ
                     st.markdown(answer)
                     
                     sources = set([Path(doc.metadata.get('source', 'Unknown')).name for doc in docs])
@@ -209,9 +259,11 @@ if __name__ == "__main__":
         
         current_env = os.environ.copy()
         current_env["STREAMLIT_RUNNING_FLAG"] = "true"
-        # Гарантируем, что подпроцесс тоже будет работать в UTF-8
         current_env["PYTHONUTF8"] = "1"
         current_env["PYTHONIOENCODING"] = "utf-8"
+        
+        # МАГИЯ ЗДЕСЬ: Принудительно передаем дочернему процессу все пути к библиотекам (.venv)
+        current_env["PYTHONPATH"] = os.pathsep.join(sys.path)
         
         subprocess.run(
             [sys.executable, "-m", "streamlit", "run", __file__], 
