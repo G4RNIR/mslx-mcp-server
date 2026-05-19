@@ -1,4 +1,18 @@
 import os
+import sys
+# --- ФОРСИРУЕМ UTF-8 ДЛЯ WINDOWS ---
+os.environ["PYTHONUTF8"] = "1"
+os.environ["PYTHONIOENCODING"] = "utf-8"
+if sys.stdout.encoding.lower() != 'utf-8':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+# -----------------------------------
+
+from dotenv import load_dotenv 
+load_dotenv()                  
 import requests
 import streamlit as st
 from pathlib import Path
@@ -8,6 +22,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 # Используем новую версию Qdrant, как обсуждали ранее
 from langchain_qdrant import QdrantVectorStore as Qdrant 
+from langchain_openai import OpenAIEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
@@ -56,14 +71,21 @@ with st.sidebar:
             lm_name = st.text_input("Имя модели (fallback)", value="qwen2.5:latest")
             
     else: 
-        lm_url = st.text_input("URL API", value="https://api.deepseek.com/v1")
-        api_key = st.text_input("API Ключ", type="password")
-        lm_name = st.text_input("Имя модели", value="deepseek-chat")
+        lm_url = st.text_input("URL API", value="https://openrouter.ai/api/v1")
         
-    st.subheader("2. Векторизация (Локально)")
-    embed_options = ["cointegrated/rubert-tiny2", "intfloat/multilingual-e5-base", "BAAI/bge-m3", "Ввести вручную..."]
-    embed_choice = st.selectbox("HuggingFace Модель", embed_options)
-    embed_model_name = st.text_input("Путь/ID модели:", value="C:\\Models\\bge-m3") if embed_choice == "Ввести вручную..." else embed_choice
+        # Подхватываем тот же ключ, что используется для векторизации
+        api_key = st.text_input(
+            "API Ключ (OpenRouter)", 
+            type="password", 
+            value=os.getenv("OPENROUTER_API_KEY", "")
+        )
+        
+        lm_name = st.text_input("Имя модели", value="google/gemini-2.5-flash")
+        
+    st.subheader("2. Векторизация (Облако OpenRouter)")
+    # Мы убираем выбор локальных моделей и жестко фиксируем лучшую
+    or_api_key = st.text_input("OpenRouter API Key (для векторов)", type="password", value=os.getenv("OPENROUTER_API_KEY", ""))
+    embed_model_name = "baai/bge-m3"
     
     # КНОПКА ИНИЦИАЛИЗАЦИИ
     st.markdown("---")
@@ -81,7 +103,11 @@ with st.sidebar:
                     streaming=True
                 )
                 
-                embeddings = HuggingFaceEmbeddings(model_name=embed_model_name)
+                embeddings = OpenAIEmbeddings(
+                    openai_api_key=or_api_key if or_api_key else "empty",
+                    openai_api_base="https://openrouter.ai/api/v1",
+                    model=embed_model_name
+                )
                 
                 qdrant = Qdrant.from_existing_collection(
                     embedding=embeddings,
@@ -125,7 +151,11 @@ with st.sidebar:
                         for chunk in chunks:
                             chunk.page_content = f"passage: {chunk.page_content}"
                     
-                    emb_init = HuggingFaceEmbeddings(model_name=embed_model_name)
+                    emb_init = OpenAIEmbeddings(
+                        openai_api_key=or_api_key if or_api_key else "empty",
+                        openai_api_base="https://openrouter.ai/api/v1",
+                        model=embed_model_name
+                    )
                     Qdrant.from_documents(chunks, emb_init, url="http://localhost:6333", collection_name="mobilesmarts_knowledge", force_recreate=True, prefer_grpc=False)
                     st.success(f"Загружено {len(chunks)} блоков!")
                 else:
@@ -167,3 +197,24 @@ if prompt := st.chat_input("Спросите что-нибудь о базе Mob
                     st.session_state.messages.append({"role": "assistant", "content": answer})
                 except Exception as e:
                     st.error(f"Ошибка генерации: {e}")
+
+# --- НАДЕЖНЫЙ ЗАПУСК ПО КНОПКЕ PLAY В IDE (ЗАЩИТА ОТ ПЕТЛИ) ---
+if __name__ == "__main__":
+    import os
+    import sys
+    import subprocess
+    
+    if not os.environ.get("STREAMLIT_RUNNING_FLAG"):
+        print("🚀 Запускаем веб-сервер Streamlit из IDE...")
+        
+        current_env = os.environ.copy()
+        current_env["STREAMLIT_RUNNING_FLAG"] = "true"
+        # Гарантируем, что подпроцесс тоже будет работать в UTF-8
+        current_env["PYTHONUTF8"] = "1"
+        current_env["PYTHONIOENCODING"] = "utf-8"
+        
+        subprocess.run(
+            [sys.executable, "-m", "streamlit", "run", __file__], 
+            env=current_env
+        )
+        sys.exit()

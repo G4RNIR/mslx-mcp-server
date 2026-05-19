@@ -67,10 +67,34 @@ def parse_mslx_to_markdown(file_path: str) -> str:
     return "\n".join(extracted_lines)
 
 if __name__ == "__main__":
-    # Запрашиваем путь у пользователя
-    user_input_dir = input("Введите путь к директории с файлами базы MobileSmarts (.mslx): ").strip()
+    import sys
     
-    # Убираем кавычки, если пользователь вставил путь с кавычками (часто бывает в Windows)
+    # Если запустили двойным кликом (без аргументов)
+    if len(sys.argv) == 1:
+        print("Запуск в интерактивном режиме...")
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            
+            root = tk.Tk()
+            root.withdraw()
+            
+            print("Выберите директорию с файлами базы MobileSmarts (.mslx) в открывшемся диалоговом окне...")
+            user_input_dir = filedialog.askdirectory(title="Выберите директорию с файлами .mslx")
+            if not user_input_dir:
+                print("Отмена операции. Директория не выбрана.")
+                sys.exit(0)
+                
+        except ImportError:
+            user_input_dir = input("Введите путь к директории с файлами базы MobileSmarts (.mslx): ").strip()
+            while not user_input_dir:
+                print("Путь не может быть пустым.")
+                user_input_dir = input("Введите путь к директории с файлами базы MobileSmarts (.mslx): ").strip()
+    else:
+        # Если скрипт запустили с аргументом (например: python normalize.py "C:\Base")
+        user_input_dir = sys.argv[1].strip()
+    
+    # Убираем кавычки
     user_input_dir = user_input_dir.strip('"').strip("'")
     target_dir = Path(user_input_dir)
     

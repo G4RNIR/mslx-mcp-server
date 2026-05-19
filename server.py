@@ -2,6 +2,8 @@ from mcp.server.fastmcp import FastMCP
 import lxml.etree as ET
 import os
 import json
+import requests
+from qdrant_client import QdrantClient
 
 # Инициализируем сервер
 mcp = FastMCP("MSLX Tools")
@@ -12,58 +14,34 @@ mcp = FastMCP("MSLX Tools")
 
 @mcp.tool()
 def extract_mslx_flow(file_path: str) -> str:
-    """
-    Парсит .mslx файл и возвращает граф переходов (имя узла, тип, куда ведет).
-    Это позволяет понять логику процесса без загрузки всего XML.
-    Также извлекает InValues (параметры вызова) и выражения для глубокого анализа контекста.
-    """
+    """Парсит .mslx файл и возвращает граф переходов."""
     try:
         tree = ET.parse(file_path)
         root = tree.getroot()
         nsmap = root.nsmap
         
-        actions = root.find("Actions", namespaces=nsmap)
-        if actions is None:
-            actions = root.find("Actions")
-            
-        if actions is None:
-            return "Узел <Actions> не найден."
+        actions = root.find("Actions", namespaces=nsmap) or root.find("Actions")
+        if actions is None: return "Узел <Actions> не найден."
             
         flow = []
         for action in actions:
             tag = action.tag.split('}', 1)[1] if '}' in action.tag else action.tag
-            action_type = tag
             name = action.attrib.get("name", "UNNAMED_NODE")
-            
             if name == "UNNAMED_NODE" and "operationName" in action.attrib:
                 name = f"Call: {action.attrib['operationName']}"
             
-            node_info = {"type": action_type, "name": name}
+            node_info = {"type": tag, "name": name}
             
-            # Маршрутизация
             for direction in ["nextDirection", "yesDirection", "noDirection", "abortDirection"]:
-                if direction in action.attrib:
-                    node_info[direction] = action.attrib[direction]
+                if direction in action.attrib: node_info[direction] = action.attrib[direction]
                 
-            # Дополнительный контекст
-            if "expression" in action.attrib:
-                node_info["expression"] = action.attrib["expression"]
-            if "sessionVariable" in action.attrib:
-                node_info["sessionVariable"] = action.attrib["sessionVariable"]
+            if "expression" in action.attrib: node_info["expression"] = action.attrib["expression"]
+            if "sessionVariable" in action.attrib: node_info["sessionVariable"] = action.attrib["sessionVariable"]
                 
-            # Чтение параметров
-            in_values = action.find("InValues", namespaces=nsmap)
-            if in_values is None:
-                in_values = action.find("InValues")
+            in_values = action.find("InValues", namespaces=nsmap) or action.find("InValues")
             if in_values is not None:
-                params = []
-                for val in in_values:
-                    p_name = val.attrib.get("name")
-                    p_val = val.text if val.text else ""
-                    if p_name:
-                        params.append(f"{p_name}={p_val}")
-                if params:
-                    node_info["in_values"] = params
+                params = [f"{v.attrib.get('name')}={v.text or ''}" for v in in_values if v.attrib.get("name")]
+                if params: node_info["in_values"] = params
                 
             flow.append(node_info)
             
@@ -73,35 +51,23 @@ def extract_mslx_flow(file_path: str) -> str:
 
 @mcp.tool()
 def get_operation_summary(file_path: str) -> str:
-    """
-    Dependency Resolver: Читает файл .mslx и возвращает информацию о том,
-    какие параметры принимает операция (InKeys) и какие отдает (OutKeys).
-    """
+    """Возвращает информацию о параметрах (InKeys) и возвращаемых значениях (OutKeys)."""
     try:
         tree = ET.parse(file_path)
         root = tree.getroot()
         nsmap = root.nsmap
-        
-        summary = {
-            "name": root.attrib.get("name", "Unknown"),
-            "parameters": [],
-            "returns": []
-        }
+        summary = {"name": root.attrib.get("name", "Unknown"), "parameters": [], "returns": []}
         
         for p_type in [("Parameters", "parameters"), ("Returns", "returns")]:
-            node = root.find(p_type[0], namespaces=nsmap)
-            if node is None: node = root.find(p_type[0])
+            node = root.find(p_type[0], namespaces=nsmap) or root.find(p_type[0])
             if node is not None:
-                for item in node:
-                    summary[p_type[1]].append({
-                        "name": item.attrib.get("fieldName"),
-                        "type": item.attrib.get("fieldType"),
-                        "comment": item.attrib.get("comment", "")
-                    })
-                
+                summary[p_type[1]] = [
+                    {"name": item.attrib.get("fieldName"), "type": item.attrib.get("fieldType")}
+                    for item in node
+                ]
         return json.dumps(summary, indent=2, ensure_ascii=False)
     except Exception as e:
-        return f"Ошибка при анализе операции: {str(e)}"
+        return f"Ошибка: {str(e)}"
 
 @mcp.tool()
 def get_deep_operation_context(folder_path: str, main_file_name: str) -> str:
@@ -175,31 +141,19 @@ def get_action_code(file_path: str, action_name: str) -> str:
         root = tree.getroot()
         nsmap = root.nsmap
         
-        actions = root.find("Actions", namespaces=nsmap)
-        if actions is None: actions = root.find("Actions")
+        actions = root.find("Actions", namespaces=nsmap) or root.find("Actions")
         if actions is None: return "Узел <Actions> не найден."
             
         for action in actions:
             if action.attrib.get("name") == action_name:
-                if "expression" in action.attrib:
-                    return action.attrib["expression"]
-                
-                in_values = action.find("InValues", namespaces=nsmap)
-                if in_values is None: in_values = action.find("InValues")
+                if "expression" in action.attrib: return action.attrib["expression"]
+                in_values = action.find("InValues", namespaces=nsmap) or action.find("InValues")
                 if in_values is not None:
-                    values = []
-                    for val in in_values:
-                        p_name = val.attrib.get("name")
-                        p_val = val.text if val.text else ""
-                        if p_name: values.append(f"{p_name}={p_val}")
-                        elif p_val: values.append(p_val)
-                    return "\n".join(values)
-                    
-                return f"Код отсутствует. Атрибуты узла: {dict(action.attrib)}"
-                
+                    return "\n".join([f"{v.attrib.get('name')}={v.text or ''}" for v in in_values if v.attrib.get("name")])
+                return f"Код отсутствует. Атрибуты: {dict(action.attrib)}"
         return f"Узел '{action_name}' не найден."
     except Exception as e:
-        return f"Ошибка при парсинге: {str(e)}"
+        return f"Ошибка: {str(e)}"
 
 @mcp.tool()
 def list_variables(file_path: str) -> str:
@@ -446,10 +400,7 @@ def save_sdd_doc(folder_path: str, document_name: str, content: str) -> str:
 
 @mcp.tool()
 def update_node_attributes(file_path: str, action_name: str, attributes_json: str) -> str:
-    """
-    Универсальный инструмент для изменения ЛЮБЫХ атрибутов узла (nextDirection, noDirection, expression и др.).
-    attributes_json - JSON-строка со словарем {имя_атрибута: новое_значение}.
-    """
+    """Универсальный инструмент для изменения ЛЮБЫХ атрибутов узла."""
     try:
         updates = json.loads(attributes_json)
         tree = ET.parse(file_path)
@@ -463,58 +414,104 @@ def update_node_attributes(file_path: str, action_name: str, attributes_json: st
             if action.attrib.get("name") == action_name:
                 for key, value in updates.items():
                     action.set(key, str(value))
-                
-                # Сохраняем с pretty_print=True, чтобы разбить одну строку XML в читаемый вид
                 tree.write(file_path, encoding="utf-8", xml_declaration=True, pretty_print=True)
                 return f"Успешно обновлены атрибуты узла '{action_name}'."
-                
-        return f"Узел с именем '{action_name}' не найден. Проверьте имя через extract_mslx_flow."
+        return f"Узел '{action_name}' не найден."
     except Exception as e:
-        return f"Ошибка при обновлении атрибутов: {str(e)}"
+        return f"Ошибка: {str(e)}"
     
 @mcp.tool()
-def semantic_search_syntax(query: str, n_results: int = 5) -> str:
+def semantic_search_syntax(query: str, n_results: int) -> str:
     """
-    RAG-поиск: Умный поиск по базе знаний типовой конфигурации Mobile SMARTS.
-    Понимает естественный язык. Обязательно используй, если нужно узнать: 
-    "как получить дату", "как перебрать коллекцию", "как округлить число" и т.д.
+    RAG-поиск: Ищет информацию и примеры кода в базе знаний MobileSmarts (Qdrant).
+    ВАЖНО: Параметр query должен быть кратким поисковым запросом.
     """
     try:
-        import chromadb
         import os
+        import requests
         import json
+        from qdrant_client import QdrantClient
         
+        safe_query = query[:1000]
+        
+        # === БЛОК НАСТРОЕК ВЕКТОРИЗАЦИИ (OpenRouter) ===
+        OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "") 
+        # ===============================================
 
-        # ВАЖНО: Динамический путь к папке mslx_vector_db (рядом с файлом сервера)
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        db_path = os.path.join(base_dir, "mslx_vector_db") 
-        
-        if not os.path.exists(db_path):
-            return f"❌ Ошибка: Векторная база не найдена по пути {db_path}."
+        if OPENROUTER_API_KEY:
+            # --- Облачный API OpenRouter (Быстро, не жрет память) ---
+            api_url = "https://openrouter.ai/api/v1/embeddings"
+            headers = {
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "baai/bge-m3",
+                "input": safe_query
+            }
             
-        client = chromadb.PersistentClient(path=db_path)
-        collection = client.get_collection(name="mslx_syntax")
+            response = requests.post(api_url, headers=headers, json=payload, timeout=15)
+            
+            if response.status_code != 200:
+                return f"Ошибка OpenRouter API: {response.text}"
+                
+            # Извлекаем вектор из ответа в стиле OpenAI
+            query_vector = response.json().get("data", [])[0].get("embedding")
+            
+        else:
+            # --- Fallback: Локальная Ollama (Если ключа нет) ---
+            embed_model = "bge-m3" 
+            ollama_url = "http://localhost:11434/api/embeddings"
+            
+            response = requests.post(
+                ollama_url, 
+                json={"model": embed_model, "prompt": safe_query}, 
+                timeout=15
+            )
+            
+            if response.status_code != 200:
+                return f"Ошибка локальной Ollama: {response.text}"
+                
+            query_vector = response.json().get("embedding")
+
+        # Проверка, что вектор успешно получен
+        if not query_vector:
+            return "Ошибка: Модель вернула пустой вектор."
+
+        # === ПОИСК В БАЗЕ QDRANT ===
+        client = QdrantClient(url="http://localhost:6333")
         
-        results = collection.query(
-            query_texts=[query],
-            n_results=n_results
+        # ИСПОЛЬЗУЕМ НОВЫЙ МЕТОД query_points (вместо устаревшего search)
+        search_response = client.query_points(
+            collection_name="mobilesmarts_knowledge",
+            query=query_vector,
+            limit=int(n_results)
         )
         
-        if not results['documents'] or not results['documents'][0]:
-            return f"Ничего не найдено по запросу: '{query}'"
+        # Проверяем свойство .points
+        if not search_response.points:
+            return f"Ничего не найдено по запросу: '{safe_query}'."
             
         formatted_results = []
-        for doc, meta in zip(results['documents'][0], results['metadatas'][0]):
+        # Перебираем массив .points
+        for hit in search_response.points:
+            content = hit.payload.get("page_content", "")
+            metadata = hit.payload.get("metadata", {})
+            source_path = metadata.get("source", "Unknown")
+            source_name = source_path.replace("\\", "/").split("/")[-1]
+            
             formatted_results.append({
-                "file": meta['file'],
-                "node_context": meta['node'],
-                "code_snippet": doc
+                "source_file": source_name,
+                "relevance_score": round(hit.score, 3),
+                "content": content
             })
             
         return json.dumps(formatted_results, indent=2, ensure_ascii=False)
         
+    except requests.exceptions.Timeout:
+        return "Ошибка: Превышено время ожидания векторизатора."
     except Exception as e:
-        return f"Ошибка при семантическом поиске: {str(e)}" 
+        return f"Критическая ошибка RAG-инструмента: {str(e)}"
 
 
 if __name__ == "__main__":
@@ -535,5 +532,5 @@ if __name__ == "__main__":
             print(f"URL: http://{args.host}:{args.port}/mcp")
         elif args.transport == "sse":
              print(f"URL: http://{args.host}:{args.port}/sse")
-             
+    print("⏳ Инициализация инструментов MSLX Tools...")         
     mcp.run(transport=args.transport)

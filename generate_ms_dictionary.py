@@ -94,9 +94,50 @@ def write_markdown_dictionary(dictionary, output_file):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Генератор словаря синтаксиса Mobile SMARTS")
-    parser.add_argument("--folder", type=str, required=True, help="Путь к папке Documents типовой конфигурации")
-    parser.add_argument("--output", type=str, default="MobileSmarts_Syntax_Dictionary.md", help="Имя выходного Markdown файла")
-    
-    args = parser.parse_args()
-    generate_dictionary(args.folder, args.output)
+    import sys
+
+    if len(sys.argv) == 1:
+        print("Запуск в интерактивном режиме...")
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            
+            root = tk.Tk()
+            root.withdraw()
+            
+            print("Выберите папку конфигурации в открывшемся диалоговом окне...")
+            folder = filedialog.askdirectory(title="Выберите папку Documents типовой конфигурации")
+            if not folder:
+                print("Отмена операции. Папка не выбрана.")
+                sys.exit(0)
+                
+            print("Выберите место для сохранения файла...")
+            output = filedialog.asksaveasfilename(
+                title="Сохранить словарь как",
+                defaultextension=".md",
+                initialfile="_Syntax_Dictionary.md",
+                filetypes=[("Markdown", "*.md"), ("All files", "*.*")]
+            )
+            if not output:
+                print("Отмена операции. Файл не выбран.")
+                sys.exit(0)
+                
+        except ImportError:
+            # Fallback на консольный ввод
+            folder = input("Введите путь к папке Documents: ").strip()
+            while not folder:
+                print("Путь не может быть пустым.")
+                folder = input("Введите путь к папке Documents: ").strip()
+                
+            output = input("Введите имя выходного файла (Enter для _Syntax_Dictionary.md): ").strip()
+            if not output:
+                output = "_Syntax_Dictionary.md"
+                
+        generate_dictionary(folder, output)
+    else:
+        parser = argparse.ArgumentParser(description="Генератор словаря синтаксиса Mobile SMARTS")
+        parser.add_argument("--folder", type=str, required=True, help="Путь к папке Documents типовой конфигурации")
+        parser.add_argument("--output", type=str, default="MobileSmarts_Syntax_Dictionary.md", help="Имя выходного Markdown файла")
+        
+        args = parser.parse_args()
+        generate_dictionary(args.folder, args.output)
