@@ -4,6 +4,10 @@ import os
 import json
 import requests
 from qdrant_client import QdrantClient
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 # Инициализируем сервер
 mcp = FastMCP("MSLX Tools")
@@ -435,7 +439,7 @@ def semantic_search_syntax(query: str, n_results: int) -> str:
         safe_query = query[:1000]
         
         # === БЛОК НАСТРОЕК ВЕКТОРИЗАЦИИ (OpenRouter) ===
-        OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "") 
+        OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") 
         # ===============================================
 
         if OPENROUTER_API_KEY:
@@ -485,7 +489,8 @@ def semantic_search_syntax(query: str, n_results: int) -> str:
         search_response = client.query_points(
             collection_name="mobilesmarts_knowledge",
             query=query_vector,
-            limit=int(n_results)
+            limit=int(n_results),
+            with_payload=True  # <--- КРИТИЧЕСКИ ВАЖНО
         )
         
         # Проверяем свойство .points

@@ -42,7 +42,7 @@ def get_active_models(base_url: str):
     return []
 
 def load_system_prompt():
-    prompt_path = Path("RAG_System_prompt.txt")
+    prompt_path = Path("RAG_System_prompt.md")
     if not prompt_path.exists():
         default_prompt = "Ты — технический эксперт по MobileSmarts.\nИспользуй только контекст.\n\n[Контекст]:\n{context}"
         with open(prompt_path, "w", encoding="utf-8") as f:
