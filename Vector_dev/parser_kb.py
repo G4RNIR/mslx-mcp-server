@@ -1,167 +1,20 @@
-📦 MSLX Tools: MCP-сервер и RAG-пайплайн для Mobile SMARTS
-MSLX Tools — это специализированный локальный сервер Model Context Protocol (MCP) и набор инструментов для анализа, реверс-инжиниринга и безопасного редактирования бизнес-процессов платформы Mobile SMARTS (файлы .mslx) с помощью ИИ-агентов (Roo Code, Cursor и др.).
+import os
+import re
+import requests
+from bs4 import BeautifulSoup
+from markdownify import markdownify as md
 
-⚙️ Системные требования
-Python 3.10 или выше.
+# === НАСТРОЙКИ ===
+OUTPUT_DIR = "Official_Docs"
+# CSS-селектор блока, в котором лежит сам текст статьи (чтобы не парсить меню и футер)
+# Для большинства сайтов это 'article', 'main' или блок с классом content.
+# Возможно, для сайта Cleverence его придется немного уточнить.
+CONTENT_SELECTOR = "main" 
 
-Docker Desktop (для запуска легкого контейнера векторной базы Qdrant).
-
-API-ключ OpenRouter (для облачной векторизации и генерации ответов).
-
-🚀 Быстрый старт (Установка в один клик)
-Для новых разработчиков процесс развертывания полностью автоматизирован.
-
-Убедитесь, что Docker запущен.
-
-Запустите файл setup.bat в корне проекта. Скрипт автоматически:
-
-Поднимет контейнер с Qdrant (база знаний).
-
-Создаст виртуальное окружение .venv.
-
-Установит все зависимости из requirements.txt.
-
-Создаст шаблон файла конфигурации .env.
-
-Откройте появившийся файл .env и добавьте ваш ключ:
-
-Extrait de code
-OPENROUTER_API_KEY=sk-or-v1-...
-🧠 Подготовка базы знаний (RAG-пайплайн)
-Поскольку Mobile SMARTS использует проприетарный синтаксис C#, ИИ-агенту необходимы эталонные примеры. Мы используем трехэтапный конвейер для подготовки данных. Все скрипты поддерживают запуск по кнопке "Play" (Run) в VS Code/Cursor.
-
-Этап 1: Нормализация исходников (normalize.py)
-Этот скрипт очищает .mslx файлы от XML-разметки и извлекает чистый C#-код, условия и структуру экранов в удобный формат Markdown.
-
-Как запустить: Нажмите кнопку "Play" в редакторе или выполните python normalize.py.
-
-Скрипт попросит указать папку с базой и сохранит результат в подпапку Cleaned_Markdown.
-
-Этап 2: Генерация словаря синтаксиса (generate_dictionary.py)
-Скрипт сканирует нормализованные Markdown-файлы и собирает все валидные системные вызовы в единый справочник, запрещая ИИ галлюцинировать.
-
-Как запустить: Нажмите кнопку "Play" в редакторе.
-
-Файл _Syntax_Dictionary.md будет сохранен в папку с документацией.
-
-Этап 3: Индексация базы и Чат (web_rag.py)
-Удобная веб-панель на базе Streamlit для управления векторной базой Qdrant и тестирования RAG.
-
-Как запустить: Откройте web_rag.py и нажмите "Play" (скрипт автоматически запустит изолированный веб-сервер в браузере).
-
-В интерфейсе укажите путь к Cleaned_Markdown и нажмите "Индексировать базу".
-
-🔌 Подключение MCP-сервера к IDE
-Добавьте конфигурацию сервера в настройки вашего ИИ-клиента (например, cline_mcp_settings.json), указав абсолютные пути к вашему проекту:
-
-JSON
-{
-  "mcpServers": {
-    "MSLX-Tools": {
-      "command": "C:\\Путь_к_проекту\\.venv\\Scripts\\python.exe",
-      "args": ["C:\\Путь_к_проекту\\server.py", "--transport", "stdio"]
-    }
-  }
-}
-(Также поддерживается запуск по SSE: python server.py --transport sse --host 127.0.0.1 --port 8000)
-
-🛡 Транзакционное редактирование (Git-откат)
-Все изменения, которые ИИ вносит в файлы .mslx, контролируются через Git.
-
-ИИ всегда выводит git diff после правок.
-
-Если код вас не устраивает, ИИ выполнит git restore . для мгновенного и безопасного отката изменений.
-
-📖 Обзор: Инструменты анализа и чтения
-Эта группа инструментов используется для безопасного извлечения данных, понимания логики переходов и сбора контекста выполнения без изменения исходных файлов.
-
-1. extract_mslx_flow
-Парсит .mslx файл и возвращает плоский граф переходов внутри блока <Actions>. Позволяет быстро понять логику процесса.
-
-Параметры: file_path (string) — Абсолютный путь к .mslx файлу.
-
-Возвращает: JSON-массив узлов.
-
-2. get_operation_summary
-Резолвер зависимостей. Читает файл и возвращает сигнатуру операции.
-
-Параметры: file_path (string)
-
-Возвращает: JSON-объект с массивами parameters и returns.
-
-3. get_deep_operation_context
-Глубокий анализатор. Извлекает граф основной операции и подтягивает сводки по всем вложенным. Рекомендуется вызывать перед любым редактированием.
-
-Параметры: folder_path (string), main_file_name (string)
-
-4. find_usages
-Глобальный поиск зависимостей. Находит все .mslx файлы, внутри которых происходит вызов указанной операции.
-
-Параметры: folder_path (string), operation_name (string)
-
-5. get_action_code
-Точечное извлечение исполняемого кода для конкретного узла действия.
-
-Параметры: file_path (string), action_name (string)
-
-6. list_variables
-Трекер состояния. Извлекает все объявленные локальные и сессионные переменные.
-
-Параметры: file_path (string)
-
-7. index_configuration
-Индексатор структуры. Собирает массив всех существующих операций и их входных параметров в папке.
-
-Параметры: folder_path (string)
-
-8. read_global_fields
-Извлекает информацию о полях из глобальных файлов (CommonFields.xml и др.).
-
-Параметры: folder_path (string)
-
-9. semantic_search_syntax
-Умный RAG-поиск по базе знаний (использует Qdrant и OpenRouter BGE-M3). Позволяет искать примеры реализации на естественном языке.
-
-Параметры: query (string) — Текстовый запрос, n_results (int) — Количество примеров.
-
-Возвращает: JSON со списком релевантных фрагментов кода из конфигурации.
-
-🛠 Обзор: Инструменты редактирования и проектирования
-Эта группа используется для внесения изменений в файлы .mslx и управления проектной документацией. Все инструменты сохраняют валидную структуру XML.
-
-1. update_action_code
-Перезаписывает логику выполнения в узле (атрибут expression).
-
-Параметры: file_path (string), action_name (string), new_code (string).
-
-2. update_in_values
-Обновляет параметры вызова в блоке <InValues>. Автоматически создает структуру тегов при их отсутствии.
-
-Параметры: file_path (string), action_name (string), updates_json (string).
-
-3. update_node_attributes
-Универсальный инструмент для изменения любых атрибутов узла (переходы nextDirection, комментарии и т.д.).
-
-Параметры: file_path (string), action_name (string), attributes_json (string).
-
-4. add_action_node
-Добавляет новый узел в конец блока <Actions>.
-
-Параметры: file_path (string), action_type (string), action_name (string), next_direction (string), additional_attributes_json (string).
-
-5. delete_action_node
-Безвозвратно удаляет указанный узел из дерева <Actions>.
-
-Параметры: file_path (string), action_name (string).
-
-6. save_sdd_doc
-Инструмент для паттерна Docs-as-Code. Сохраняет техническую спецификацию (SDD) в формате Markdown.
-
-Параметры: folder_path (string), document_name (string), content (string).
-
-
-Список использованных ресурсов базы знаний Cleverence: 
-"https://kb.cleverence.ru/wh15/1.6/what-is-warehouse-15/", 
+# Список URL-адресов статей, которые нужно скачать
+URLS_TO_SCRAPE = [
+    # Замените эти ссылки на реальные адреса из базы знаний Cleverence
+    "https://kb.cleverence.ru/wh15/1.6/what-is-warehouse-15/", 
     "https://kb.cleverence.ru/wh15/1.6/levels-of-warehouse-15/",  
     "https://kb.cleverence.ru/wh15/1.6/how-to-start-working-warehouse-15/",
     "https://kb.cleverence.ru/wh15/1.6/address-storage-in-warehouse-15/",
@@ -376,3 +229,98 @@ JSON
     "https://kb.cleverence.ru/wh15/1.6/intex001/",
     "https://kb.cleverence.ru/wh15/1.6/mse1005/",
     "https://kb.cleverence.ru/wh15/1.6/1c-crash/"
+    
+
+]
+# =================
+
+def clean_filename(title):
+    """Очищает заголовок от запрещенных символов для создания имени файла"""
+    clean_name = re.sub(r'[\\/*?:"<>|]', "", title)
+    return clean_name.strip()[:100] # Ограничиваем длину
+
+def fetch_and_convert(url):
+    print(f"🔄 Обрабатываю: {url}")
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        response.encoding = 'utf-8'
+        
+        # МАГИЯ ЗДЕСЬ: используем 'lxml' вместо 'html.parser'
+        soup = BeautifulSoup(response.text, 'lxml')
+        
+        # Безопасно получаем заголовок
+        title_tag = soup.find('h1')
+        page_title = title_tag.text.strip() if title_tag else "Без_заголовка"
+        filename = f"{clean_filename(page_title)}.md"
+        
+        content_block = soup.select_one(CONTENT_SELECTOR)
+        if not content_block:
+            content_block = soup.body
+            print("  ⚠️ Основной блок не найден, парсим всю страницу.")
+            
+       # === 1. АГРЕССИВНАЯ ОЧИСТКА ДОМ-ДЕРЕВА ===
+        trash_selectors = [
+            'nav', 'footer', 
+            '.breadcrumb', '.breadcrumbs', '.js-breadcrumbs',
+            '.pagination', '.pager', '.page-navigation',
+            'img', 'picture', 'svg', 'figure',
+            # ДОБАВЛЕНО: Убиваем блоки оглавления (Table of Contents)
+            '.toc', '.table-of-contents', '#toc', '.article-toc' 
+        ]
+        
+        # 1. Удаляем все теги по классам
+        for selector in trash_selectors:
+            for tag in content_block.select(selector):
+                tag.decompose()
+                
+        # ДОБАВЛЕНО: 2. Вырезаем "якоря" из заголовков (Прямая ссылка на...)
+        for header in content_block.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+            for anchor in header.find_all('a'):
+                anchor.decompose()
+                
+        # ДОБАВЛЕНО: 3. Удаляем абзацы, в которых есть только текст "Содержание этой страницы"
+        for p in content_block.find_all(['p', 'div']):
+            if p.text.strip() == "Содержание этой страницы":
+                p.decompose()
+
+        for a in content_block.find_all('a'):
+            a.unwrap()
+                
+        # Умная конвертация в Markdown
+        markdown_text = md(
+            str(content_block), 
+            strip=['script', 'style'], 
+            ignore_links=True
+        )
+        
+        metadata_header = (
+            f"Тип_источника: Официальная документация\n"
+            f"URL: {url}\n"
+            f"Тема: {page_title}\n"
+            f"{'='*40}\n\n"
+        )
+        
+        final_text = metadata_header + markdown_text.strip()
+        
+        file_path = os.path.join(OUTPUT_DIR, filename)
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(final_text)
+            
+        print(f"  ✅ Сохранено: {filename}")
+        
+    except Exception as e:
+        # Теперь исключения перехватываются корректно, не ломая скрипт
+        print(f"  ❌ Ошибка при обработке {url}: {e}")
+
+if __name__ == "__main__":
+    if not os.path.exists(OUTPUT_DIR):
+        os.makedirs(OUTPUT_DIR)
+        print(f"📁 Создана папка {OUTPUT_DIR}")
+        
+    print(f"🚀 Начинаем сбор базы знаний (Всего статей: {len(URLS_TO_SCRAPE)})")
+    for link in URLS_TO_SCRAPE:
+        fetch_and_convert(link)
+        
+    print("\n🎉 Сбор завершен! Файлы лежат в папке Official_Docs")

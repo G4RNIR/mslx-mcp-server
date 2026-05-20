@@ -19,6 +19,14 @@ def parse_mslx_to_markdown(file_path: str) -> str:
 
     extracted_lines = []
     op_name = root.attrib.get("name", "Неизвестная_Операция")
+    file_name = Path(file_path).name  # Получаем имя исходного файла
+    
+    # === ДОБАВЛЕНА ШАПКА МЕТАДАННЫХ ДЛЯ RAG ===
+    extracted_lines.append("Тип_источника: Исходный код проекта")
+    extracted_lines.append(f"Файл: {file_name}")
+    extracted_lines.append(f"{'='*40}\n")
+    # ==========================================
+
     extracted_lines.append(f"# Полное описание операции: {op_name}\n")
     
     # Превращаем дерево в список, чтобы парсер мог "заглядывать вперед"

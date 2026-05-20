@@ -91,8 +91,29 @@ with st.sidebar:
     embed_model_name = "baai/bge-m3"
 
     st.subheader("3. Индексация базы")
-    data_dir_input = st.text_input("Путь к чистым .md файлам", value=str())
+    # Добавляем два поля для ввода путей с дефолтными значениями
+    code_dir_input = st.text_input("Папка с вашим кодом (.md)", value="Cleaned_Markdown")
+    docs_dir_input = st.text_input("Папка с официальной базой (.md)", value="Official_Docs")
     
+    st.subheader("4. Настройки точности (RAG)")
+    
+    similarity_threshold = st.slider(
+        "Порог совпадения смысла (Score Threshold)", 
+        min_value=0.50, 
+        max_value=0.99, 
+        value=0.75, 
+        step=0.01,
+        help="Отсекает фрагменты, смысл которых совпадает с запросом меньше, чем на этот процент. 0.75 — хороший старт."
+    )
+    
+    top_k_chunks = st.slider(
+        "Максимум фрагментов (Top-K)", 
+        min_value=1, 
+        max_value=15, 
+        value=5,
+        help="Сколько максимум кусков текста ИИ может взять для чтения за один раз."
+    )
+
     # КНОПКА ИНИЦИАЛИЗАЦИИ
     st.markdown("---")
     if st.button("🚀 ПОДКЛЮЧИТЬ ИИ", type="primary", use_container_width=True):
@@ -122,13 +143,32 @@ with st.sidebar:
                     prefer_grpc=False
                 )
                 
-                # 1. Векторный поиск Qdrant (Поиск по смыслу)
-                qdrant_retriever = qdrant.as_retriever(search_kwargs={"k": 7}) # Берем 7 кусков
+                # 1. Векторный поиск Qdrant (С ПОРОГОМ ОТСЕЧЕНИЯ И ДИНАМИЧЕСКИМ K)
+                qdrant_retriever = qdrant.as_retriever(
+                    search_type="similarity_score_threshold",
+                    search_kwargs={
+                        "k": top_k_chunks, 
+                        "score_threshold": similarity_threshold
+                    }
+                )
                 
                 # 2. Поднимаем лексический поиск BM25 (Точные совпадения)
-                target_dir = Path(data_dir_input) 
-                loader = DirectoryLoader(str(target_dir), glob="**/*.md", loader_cls=TextLoader, loader_kwargs={'encoding': 'utf-8'})
-                docs_for_bm25 = loader.load()
+                docs_for_bm25 = []
+                
+                # Собираем документы из обеих папок, если они указаны и существуют
+                for folder_path in [code_dir_input, docs_dir_input]:
+                    if folder_path.strip() and Path(folder_path).exists():
+                        loader = DirectoryLoader(
+                            folder_path, 
+                            glob="**/*.md", 
+                            loader_cls=TextLoader, 
+                            loader_kwargs={'encoding': 'utf-8'}
+                        )
+                        docs_for_bm25.extend(loader.load())
+                
+                if not docs_for_bm25:
+                    st.error("Не найдено файлов .md для текстового поиска. Проверьте пути к папкам.")
+                    st.stop() # Останавливаем запуск, если файлов нет
                 
                 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200, separators=["## Блок:", "\n\n", "\n", " "])
                 chunks = text_splitter.split_documents(docs_for_bm25)
@@ -139,7 +179,9 @@ with st.sidebar:
                     chunk.page_content = f"Файл_источник: {file_name}\n" + chunk.page_content
                     
                 bm25_retriever = BM25Retriever.from_documents(chunks)
-                bm25_retriever.k = 7 # Берем 7 кусков
+                
+                # Ограничиваем количество фрагментов значением с ползунка
+                bm25_retriever.k = top_k_chunks
                 
                 # 3. ГИБРИДНЫЙ ПОИСК (70% доверия точным словам, 30% смыслу)
                 hybrid_retriever = EnsembleRetriever(
@@ -147,7 +189,7 @@ with st.sidebar:
                     weights=[0.7, 0.3] 
                 )
                 
-                # 4. ОТКЛЮЧАЕМ FLASHRANK (Комментируем эти строки)
+                # 4. ОТКЛЮЧАЕМ FLASHRANK 
                 # compressor = FlashrankRerank()
                 # retriever = ContextualCompressionRetriever(
                 #     base_compressor=compressor, 
@@ -170,31 +212,70 @@ with st.sidebar:
 
     
     if st.button("🔄 Индексировать базу", use_container_width=True):
-        target_dir = Path(data_dir_input)
-        if not target_dir.exists():
-            st.error("Папка не найдена!")
-        else:
-            with st.spinner("Идет векторизация..."):
-                loader = DirectoryLoader(str(target_dir), glob="**/*.md", loader_cls=TextLoader, loader_kwargs={'encoding': 'utf-8'})
-                documents = loader.load()
-                
-                if documents:
-                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200, separators=["## Блок:", "\n\n", "\n", " "])
-                    chunks = text_splitter.split_documents(documents)
+        with st.spinner("Идет сбор и векторизация данных..."):
+            
+            # Собираем пути из интерфейса
+            folders_to_index = {
+                code_dir_input: "Исходный код проекта",
+                docs_dir_input: "Официальная документация"
+            }
+            
+            all_chunks = []
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000, 
+                chunk_overlap=200, 
+                separators=["## Блок:", "\n\n", "\n", " "]
+            )
+            
+            # Пробегаемся по папкам, указанным в UI
+            for folder_path, source_type in folders_to_index.items():
+                if not folder_path.strip(): # Пропускаем, если поле оставили пустым
+                    continue
                     
-                    if "e5" in embed_model_name.lower():
-                        for chunk in chunks:
-                            chunk.page_content = f"passage: {chunk.page_content}"
-                    
-                    emb_init = OpenAIEmbeddings(
-                        openai_api_key=or_api_key if or_api_key else "empty",
-                        openai_api_base="https://openrouter.ai/api/v1",
-                        model=embed_model_name
+                target_dir = Path(folder_path)
+                if target_dir.exists():
+                    st.info(f"📁 Читаем папку: {folder_path}...")
+                    loader = DirectoryLoader(
+                        str(target_dir), 
+                        glob="**/*.md", 
+                        loader_cls=TextLoader, 
+                        loader_kwargs={'encoding': 'utf-8'}
                     )
-                    Qdrant.from_documents(chunks, emb_init, url="http://localhost:6333", collection_name="mobilesmarts_knowledge", force_recreate=True, prefer_grpc=False)
-                    st.success(f"Загружено {len(chunks)} блоков!")
+                    documents = loader.load()
+                    
+                    if documents:
+                        chunks = text_splitter.split_documents(documents)
+                        # Добавляем метаданные
+                        for chunk in chunks:
+                            chunk.metadata['source_type'] = source_type
+                            chunk.metadata['folder'] = folder_path
+                        all_chunks.extend(chunks)
+                        st.write(f"Найдено {len(chunks)} фрагментов в {folder_path}")
                 else:
-                    st.warning("Нет файлов .md")
+                    st.warning(f"⚠️ Папка '{folder_path}' не найдена. Убедитесь, что путь указан верно.")
+            
+            # Загрузка в Qdrant
+            if all_chunks:
+                emb_init = OpenAIEmbeddings(
+                    openai_api_key=or_api_key if or_api_key else "empty",
+                    openai_api_base="https://openrouter.ai/api/v1",
+                    model=embed_model_name
+                )
+                
+                try:
+                    Qdrant.from_documents(
+                        all_chunks, 
+                        emb_init, 
+                        url="http://localhost:6333", 
+                        collection_name="mobilesmarts_knowledge", 
+                        force_recreate=True, 
+                        prefer_grpc=False
+                    )
+                    st.success(f"✅ База успешно обновлена! Всего загружено {len(all_chunks)} фрагментов.")
+                except Exception as e:
+                    st.error(f"❌ Ошибка при загрузке в Qdrant: {e}")
+            else:
+                st.error("Нет данных для индексации! Проверьте наличие .md файлов.")
 
 # --- Чат ---
 if "messages" not in st.session_state:
