@@ -1,31 +1,59 @@
 @echo off
 chcp 65001 >nul
+setlocal
+
 echo ========================================================
-echo 🚀 Развертывание MSLX Tools и подготовка окружения
+echo MSLX Tools: setup
 echo ========================================================
 
-echo [1/4] Запуск локального контейнера Qdrant...
+echo [1/5] Starting Qdrant...
 docker-compose up -d
+if errorlevel 1 (
+    echo ERROR: docker-compose failed. Check Docker Desktop.
+    exit /b 1
+)
 
-echo [2/4] Инициализация виртуального окружения Python...
+echo [2/5] Creating Python virtual environment...
 if not exist ".venv" (
     python -m venv .venv
+    if errorlevel 1 (
+        echo ERROR: failed to create .venv.
+        exit /b 1
+    )
 )
 
-echo [3/4] Установка необходимых зависимостей...
+echo [3/5] Installing Python dependencies...
 call .venv\Scripts\activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
+if errorlevel 1 (
+    echo ERROR: pip install failed.
+    exit /b 1
+)
 
-echo [4/4] Создание локального файла конфигурации окружения...
+echo [4/5] Creating .env from template...
 if not exist ".env" (
-    copy .env.example .env
-    echo Файл .env успешно создан из шаблона.
+    copy .env.example .env >nul
+    echo Created .env. Fill OPENROUTER_API_KEY and check Mobile SMARTS paths.
+) else (
+    echo .env already exists, skipping.
+)
+
+echo [5/5] Building Mobile SMARTS syntax checker...
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\MobileSmartsSyntaxChecker\build.ps1"
+if errorlevel 1 (
+    echo WARNING: syntax checker build failed.
+    echo Check .\MobileSmartsSyntaxChecker\README.md and build it manually.
+) else (
+    echo Syntax checker built successfully.
 )
 
 echo ========================================================
-echo ✅ УСТАНОВКА ЗАВЕРШЕНА!
+echo Setup completed.
 echo ========================================================
-echo 1. Откройте файл .env и добавьте ваш OPENROUTER_API_KEY.
-echo 2. Подключите сервер к вашему ИИ-клиенту.
+echo Next steps:
+echo 1. Open .env and fill OPENROUTER_API_KEY.
+echo 2. Check MOBILESMARTS_DIR points to folder with Cleverence.Parsing.dll.
+echo 3. Configure your AI client MCP server to run server.py.
 echo ========================================================
 pause

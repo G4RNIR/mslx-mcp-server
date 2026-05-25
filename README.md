@@ -1,378 +1,414 @@
-📦 MSLX Tools: MCP-сервер и RAG-пайплайн для Mobile SMARTS
-MSLX Tools — это специализированный локальный сервер Model Context Protocol (MCP) и набор инструментов для анализа, реверс-инжиниринга и безопасного редактирования бизнес-процессов платформы Mobile SMARTS (файлы .mslx) с помощью ИИ-агентов (Roo Code, Cursor и др.).
+# MSLX Tools
 
-⚙️ Системные требования
-Python 3.10 или выше.
+MCP-сервер и RAG-пайплайн для анализа, трассировки и безопасного редактирования конфигураций Mobile SMARTS / Cleverence.
 
-Docker Desktop (для запуска легкого контейнера векторной базы Qdrant).
+Проект решает две основные задачи:
 
-API-ключ OpenRouter (для облачной векторизации и генерации ответов).
+- дает AI-клиенту набор MCP-инструментов для чтения и изменения `.mslx` XML-деревьев;
+- собирает локальную базу знаний по Mobile SMARTS в Qdrant и позволяет искать синтаксис/примеры через RAG.
 
-🚀 Быстрый старт (Установка в один клик)
-Для новых разработчиков процесс развертывания полностью автоматизирован.
+## Структура проекта
 
-Убедитесь, что Docker запущен.
+```text
+mslx-mcp-server/
+  server.py                         # MCP-сервер MSLX Tools
+  MobileSmartsSyntaxChecker/        # CLI-checker синтаксиса через Cleverence.Parsing.dll
+    Program.cs
+    build.ps1
+  SystemPrompt.md                   # системный промпт для AI-агента
+  RAG_System_prompt.md              # системный промпт для web RAG-чата
+  setup.bat                         # быстрый старт Windows
+  docker-compose.yml                # Qdrant
+  requirements.txt                  # Python-зависимости
+  generate_ms_dictionary.py         # генератор словаря синтаксиса Mobile SMARTS
+  test_search.py                    # проверка поиска Qdrant
+  test_hybrid.py                    # проверка гибридного поиска
+  Vector_dev/
+    web_rag.py                      # Streamlit UI для индексации и чата
+    mslx_cleaning_for_RAG.py        # конвертация .mslx в Markdown для RAG
+    Qdrant_vector_ms_build.py       # отдельный скрипт загрузки в Qdrant
+    Official_Docs/                  # markdown-документация Cleverence
+```
 
-Запустите файл setup.bat в корне проекта. Скрипт автоматически:
+Рабочая конфигурация Mobile SMARTS не хранится в этом репозитории. Для MCP-инструментов передавайте абсолютный путь к папке `Document` нужной базы, например:
 
-Поднимет контейнер с Qdrant (база знаний).
+```text
+C:\Cleverence\Databases\MyBase\Document
+```
 
-Создаст виртуальное окружение .venv.
+Внутри `Document` сервер ожидает стандартные папки:
 
-Установит все зависимости из requirements.txt.
+- `DocumentTypes/`
+- `Operations/`
+- `Docs/`
 
-Создаст шаблон файла конфигурации .env.
+## Требования
 
-Откройте появившийся файл .env и добавьте ваш ключ:
+- Windows 10/11.
+- Python 3.10+.
+- Docker Desktop для Qdrant.
+- Git.
+- Доступ к OpenRouter API, если используется облачная векторизация/LLM.
+- Опционально: локальная Ollama для fallback-режима RAG.
+- Локальный `MobileSmartsSyntaxChecker.exe` на базе `Cleverence.Parsing.dll`.
 
-Extrait de code
+Исходники checker-а лежат в `MobileSmartsSyntaxChecker/`. `setup.bat` собирает его автоматически в:
+
+```text
+MobileSmartsSyntaxChecker\bin\MobileSmartsSyntaxChecker.exe
+```
+
+Путь к syntax checker задается переменной:
+
+```env
+MOBILESMARTS_SYNTAX_CHECKER=E:\mcp-ms\mslx-mcp-server\MobileSmartsSyntaxChecker\bin\MobileSmartsSyntaxChecker.exe
+MOBILESMARTS_DIR=E:\MobileSmarts\Desktop
+```
+
+Если checker не найден, инструмент `validate_mslx_syntax` вернет понятную ошибку и заблокирует pre-flight проверки выражений.
+
+## Быстрое развертывание
+
+1. Клонируйте репозиторий:
+
+```powershell
+git clone <repo-url> E:\mcp-ms\mslx-mcp-server
+cd E:\mcp-ms\mslx-mcp-server
+```
+
+2. Запустите Docker Desktop.
+
+3. Выполните установку:
+
+```powershell
+.\setup.bat
+```
+
+Скрипт:
+
+- поднимет Qdrant через `docker-compose up -d`;
+- создаст `.venv`;
+- установит зависимости из `requirements.txt`;
+- создаст `.env` из `.env.example`, если `.env` отсутствует.
+
+4. Заполните `.env`:
+
+```env
 OPENROUTER_API_KEY=sk-or-v1-...
-🧠 Подготовка базы знаний (RAG-пайплайн)
-Поскольку Mobile SMARTS использует проприетарный синтаксис C#, ИИ-агенту необходимы эталонные примеры. Мы используем трехэтапный конвейер для подготовки данных. Все скрипты поддерживают запуск по кнопке "Play" (Run) в VS Code/Cursor.
+MOBILESMARTS_SYNTAX_CHECKER=E:\mcp-ms\mslx-mcp-server\MobileSmartsSyntaxChecker\bin\MobileSmartsSyntaxChecker.exe
+MOBILESMARTS_DIR=E:\MobileSmarts\Desktop
+```
 
-Этап 1: Нормализация исходников (normalize.py)
-Этот скрипт очищает .mslx файлы от XML-разметки и извлекает чистый C#-код, условия и структуру экранов в удобный формат Markdown.
+Не коммитьте `.env`.
 
-Как запустить: Нажмите кнопку "Play" в редакторе или выполните python normalize.py.
+## Ручное развертывание
 
-Скрипт попросит указать папку с базой и сохранит результат в подпапку Cleaned_Markdown.
+Если `setup.bat` не подходит:
 
-Этап 2: Генерация словаря синтаксиса (generate_dictionary.py)
-Скрипт сканирует нормализованные Markdown-файлы и собирает все валидные системные вызовы в единый справочник, запрещая ИИ галлюцинировать.
+```powershell
+docker-compose up -d
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
+```
 
-Как запустить: Нажмите кнопку "Play" в редакторе.
+Проверка Python-части:
 
-Файл _Syntax_Dictionary.md будет сохранен в папку с документацией.
+```powershell
+.\.venv\Scripts\python.exe -m py_compile server.py
+```
 
-Этап 3: Индексация базы и Чат (web_rag.py)
-Удобная веб-панель на базе Streamlit для управления векторной базой Qdrant и тестирования RAG.
+Проверка Qdrant:
 
-Как запустить: Откройте web_rag.py и нажмите "Play" (скрипт автоматически запустит изолированный веб-сервер в браузере).
+```powershell
+curl http://localhost:6333/collections
+```
 
-В интерфейсе укажите путь к Cleaned_Markdown и нажмите "Индексировать базу".
+## Запуск MCP-сервера
 
-🔌 Подключение MCP-сервера к IDE
-Добавьте конфигурацию сервера в настройки вашего ИИ-клиента (например, cline_mcp_settings.json), указав абсолютные пути к вашему проекту:
+### Stdio
 
-JSON
+Основной режим для Cursor, Cline, Roo Code и других локальных AI-клиентов:
+
+```powershell
+.\.venv\Scripts\python.exe server.py --transport stdio
+```
+
+Пример конфигурации MCP-клиента:
+
+```json
 {
   "mcpServers": {
-    "MSLX-Tools": {
-      "command": "C:\\Путь_к_проекту\\.venv\\Scripts\\python.exe",
-      "args": ["C:\\Путь_к_проекту\\server.py", "--transport", "stdio"]
+    "MSLX Tools": {
+      "command": "E:\\mcp-ms\\mslx-mcp-server\\.venv\\Scripts\\python.exe",
+      "args": [
+        "E:\\mcp-ms\\mslx-mcp-server\\server.py",
+        "--transport",
+        "stdio"
+      ]
     }
   }
 }
-(Также поддерживается запуск по SSE: python server.py --transport sse --host 127.0.0.1 --port 8000)
+```
 
-🛡 Транзакционное редактирование (Git-откат)
-Все изменения, которые ИИ вносит в файлы .mslx, контролируются через Git.
+### HTTP/SSE
 
-ИИ всегда выводит git diff после правок.
+Для отладки:
 
-Если код вас не устраивает, ИИ выполнит git restore . для мгновенного и безопасного отката изменений.
+```powershell
+.\.venv\Scripts\python.exe server.py --transport streamable-http --host 127.0.0.1 --port 8000
+```
 
-📖 Обзор: Инструменты анализа и чтения
-Эта группа инструментов используется для безопасного извлечения данных, понимания логики переходов и сбора контекста выполнения без изменения исходных файлов.
+URL:
 
-1. extract_mslx_flow
-Парсит .mslx файл и возвращает плоский граф переходов внутри блока <Actions>. Позволяет быстро понять логику процесса.
+```text
+http://127.0.0.1:8000/mcp
+```
 
-Параметры: file_path (string) — Абсолютный путь к .mslx файлу.
+SSE:
 
-Возвращает: JSON-массив узлов.
+```powershell
+.\.venv\Scripts\python.exe server.py --transport sse --host 127.0.0.1 --port 8000
+```
 
-2. get_operation_summary
-Резолвер зависимостей. Читает файл и возвращает сигнатуру операции.
+URL:
 
-Параметры: file_path (string)
+```text
+http://127.0.0.1:8000/sse
+```
 
-Возвращает: JSON-объект с массивами parameters и returns.
+## MCP-инструменты
 
-3. get_deep_operation_context
-Глубокий анализатор. Извлекает граф основной операции и подтягивает сводки по всем вложенным. Рекомендуется вызывать перед любым редактированием.
+Все пути передаются абсолютными. Параметры с суффиксом `_json` передаются строкой с валидным JSON, а не объектом.
 
-Параметры: folder_path (string), main_file_name (string)
+### Чтение и анализ
 
-4. find_usages
-Глобальный поиск зависимостей. Находит все .mslx файлы, внутри которых происходит вызов указанной операции.
+| Инструмент | Назначение |
+|---|---|
+| `extract_mslx_flow(file_path)` | Возвращает плоский граф действий из блока `Actions`. |
+| `get_operation_summary(file_path)` | Возвращает параметры и возвращаемые значения операции. |
+| `get_deep_operation_context(folder_path, main_file_name)` | Возвращает граф основной операции и сводки вложенных операций. |
+| `find_usages(folder_path, operation_name, include_document_types=true)` | Ищет вызовы операции в `Operations` и, при необходимости, в `DocumentTypes`. Пустой `used_in` считается блокером перед редактированием. |
+| `trace_document_entrypoint(document_root_path, document_type_name, max_depth=10)` | Строит цепочку от типа документа к вызываемым операциям. |
+| `trace_operation_calls(file_path, depth=5, document_root_path="")` | Рекурсивно раскрывает все `OperationAction`. |
+| `find_reachable_actions(document_root_path, document_type_name, action_type, max_depth=10)` | Ищет достижимые действия заданного типа из точки входа документа. |
+| `explain_call_path_to_action(document_root_path, document_type_name, target_action_type_or_name, max_depth=10)` | Объясняет путь от документа до действия по типу или имени. |
+| `get_action_code(file_path, action_name)` | Возвращает `expression` или параметры вызова конкретного узла. |
+| `list_variables(file_path)` | Возвращает объявленные параметры, локальные и сессионные переменные. |
+| `index_configuration(folder_path)` | Индексирует операции и их параметры в папке. |
+| `read_global_fields(folder_path)` | Читает глобальные поля из XML-конфигурации. |
+| `semantic_search_syntax(query, n_results, source_type="all")` | Ищет синтаксис и примеры в Qdrant. `source_type`: `all`, `code`, `official`. |
 
-Параметры: folder_path (string), operation_name (string)
+### Проверка и редактирование
 
-5. get_action_code
-Точечное извлечение исполняемого кода для конкретного узла действия.
+| Инструмент | Назначение |
+|---|---|
+| `validate_mslx_syntax(source, mode="expression", normalize_braces=true)` | Проверяет синтаксис через Cleverence parser. Русские идентификаторы передаются в checker безопасно через JSON escape. |
+| `copy_operation_file(source_file_path, target_file_path, new_operation_name="", overwrite=false)` | Копирует `.mslx` операцию и меняет корневой `name`. |
+| `update_operation_root_attributes(file_path, attributes_json)` | Меняет атрибуты корневого узла операции или типа документа. |
+| `add_document_type_column(file_path, column_name, attributes_json="{}")` | Добавляет колонку в `DocumentType/Columns`. |
+| `update_comparing_field_names_for_current_items(file_path, action_name, field_names_json, mode="merge", item_tag="")` | Обновляет вложенный список `ComparingFieldNamesForCurrentItems` у `AcceptInDocumentAction`. |
+| `update_operation_action_io(file_path, action_name, in_keys_json="[]", out_keys_json="[]", out_values_json="[]", mode="merge")` | Создает или обновляет `InKeys`, `OutKeys`, `OutValues` внутри `OperationAction`. |
+| `update_action_code(file_path, action_name, new_code)` | Меняет атрибут `expression` узла с pre-flight проверкой. |
+| `update_in_values(file_path, action_name, updates_json)` | Обновляет/добавляет `InValues`. |
+| `add_action_node(file_path, action_type, action_name, next_direction, additional_attributes_json="{}")` | Добавляет действие в конец `Actions`. |
+| `delete_action_node(file_path, action_name)` | Удаляет действие из `Actions`. |
+| `update_node_attributes(file_path, action_name, attributes_json)` | Меняет любые атрибуты действия. |
+| `save_sdd_doc(folder_path, document_name, content)` | Сохраняет SDD в `Document/Docs`. |
 
-Параметры: file_path (string), action_name (string)
+### Примеры вызовов
 
-6. list_variables
-Трекер состояния. Извлекает все объявленные локальные и сессионные переменные.
+Проверить реальный путь от документа до записи товара:
 
-Параметры: file_path (string)
+```json
+{
+  "document_root_path": "C:\\Base\\Document",
+  "document_type_name": "Отгрузка",
+  "target_action_type_or_name": "AcceptInDocumentAction",
+  "max_depth": 10
+}
+```
 
-7. index_configuration
-Индексатор структуры. Собирает массив всех существующих операций и их входных параметров в папке.
+Добавить поле в список сравнения строк:
 
-Параметры: folder_path (string)
+```json
+{
+  "file_path": "C:\\Base\\Document\\Operations\\ОснПроцесс.mslx",
+  "action_name": "Запись SelectedProduct в документ",
+  "field_names_json": "[\"Номенклатура\", \"Характеристика\", \"ds_BoxId\"]",
+  "mode": "merge",
+  "item_tag": ""
+}
+```
 
-8. read_global_fields
-Извлекает информацию о полях из глобальных файлов (CommonFields.xml и др.).
+Скопировать глобальную операцию перед доработкой:
 
-Параметры: folder_path (string)
+```json
+{
+  "source_file_path": "C:\\Base\\Document\\Operations\\ЗаписьТовара.mslx",
+  "target_file_path": "C:\\Base\\Document\\Operations\\ds_ЗаписьТовара.mslx",
+  "new_operation_name": "ds_ЗаписьТовара",
+  "overwrite": false
+}
+```
 
-9. semantic_search_syntax
-Умный RAG-поиск по базе знаний (использует Qdrant и OpenRouter BGE-M3). Позволяет искать примеры реализации на естественном языке.
+## Обязательный workflow редактирования `.mslx`
 
-Параметры: query (string) — Текстовый запрос, n_results (int) — Количество примеров.
+1. Найти точку входа документа через `trace_document_entrypoint`.
+2. Построить reachability-граф через `trace_operation_calls`, `find_reachable_actions` или `explain_call_path_to_action`.
+3. Проверить зависимости через `find_usages`.
+4. Если `find_usages.used_in=[]` или действие не достижимо из документа, не редактировать операцию.
+5. Для глобальной операции сначала сделать копию через `copy_operation_file`, затем заменить вызовы на `ds_`-операцию.
+6. Проверить выражения через `validate_mslx_syntax`.
+7. Внести изменения только MCP-инструментами.
+8. Сохранить SDD через `save_sdd_doc`.
+9. Проверить `git diff`.
 
-Возвращает: JSON со списком релевантных фрагментов кода из конфигурации.
+## RAG-пайплайн
 
-🛠 Обзор: Инструменты редактирования и проектирования
-Эта группа используется для внесения изменений в файлы .mslx и управления проектной документацией. Все инструменты сохраняют валидную структуру XML.
+### 1. Подготовить Markdown из `.mslx`
 
-1. update_action_code
-Перезаписывает логику выполнения в узле (атрибут expression).
+Скрипт `Vector_dev/mslx_cleaning_for_RAG.py` рекурсивно читает `.mslx` и сохраняет Markdown в подпапку `Cleaned_Markdown`.
 
-Параметры: file_path (string), action_name (string), new_code (string).
+Интерактивный запуск:
 
-2. update_in_values
-Обновляет параметры вызова в блоке <InValues>. Автоматически создает структуру тегов при их отсутствии.
+```powershell
+.\.venv\Scripts\python.exe Vector_dev\mslx_cleaning_for_RAG.py
+```
 
-Параметры: file_path (string), action_name (string), updates_json (string).
+Запуск с аргументом:
 
-3. update_node_attributes
-Универсальный инструмент для изменения любых атрибутов узла (переходы nextDirection, комментарии и т.д.).
+```powershell
+.\.venv\Scripts\python.exe Vector_dev\mslx_cleaning_for_RAG.py "C:\Base\Document"
+```
 
-Параметры: file_path (string), action_name (string), attributes_json (string).
+### 2. Сгенерировать словарь синтаксиса
 
-4. add_action_node
-Добавляет новый узел в конец блока <Actions>.
+```powershell
+.\.venv\Scripts\python.exe generate_ms_dictionary.py --folder "C:\Base\Document\Cleaned_Markdown" --output "C:\Base\Document\Docs\_Syntax_Dictionary.md"
+```
 
-Параметры: file_path (string), action_type (string), action_name (string), next_direction (string), additional_attributes_json (string).
+Если запустить без аргументов, скрипт предложит выбрать папку через диалог.
 
-5. delete_action_node
-Безвозвратно удаляет указанный узел из дерева <Actions>.
+### 3. Запустить Qdrant
 
-Параметры: file_path (string), action_name (string).
+```powershell
+docker-compose up -d
+```
 
-6. save_sdd_doc
-Инструмент для паттерна Docs-as-Code. Сохраняет техническую спецификацию (SDD) в формате Markdown.
+Коллекция, которую использует проект:
 
-Параметры: folder_path (string), document_name (string), content (string).
+```text
+mobilesmarts_knowledge
+```
 
+### 4. Запустить Streamlit UI
 
-Список использованных ресурсов базы знаний Cleverence: 
-"https://kb.cleverence.ru/wh15/1.6/what-is-warehouse-15/", 
-    "https://kb.cleverence.ru/wh15/1.6/levels-of-warehouse-15/",  
-    "https://kb.cleverence.ru/wh15/1.6/how-to-start-working-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/address-storage-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/reference-storage-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/working-with-cells-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/working-with-transport-packaging-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/accounting-by-serial-number-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/accounting-by-series-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/working-with-weighed-goods-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/working-with-retail-object-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/teamwork-with-document-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/printing-labels-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/smart-partial-additional-unloading-of-items-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/mobile-device-monitoring-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/minimum-requirements-for-installing-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-install-warehouse-15-on-pc/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-deploy-a-warehouse-15-database-from-a-template/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-install-warehouse-15-on-android/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-install-warehouse-15-on-smartphone-with-android/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-install-warehouse-15-on-windows/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-connect-mobile-device-with-warehouse-15-to-pc/",
-    "https://kb.cleverence.ru/wh15/1.6/mobile-device-does-not-connect-to-pc/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-manually-connect-a-cleverence-database-to-1c/",
-    "https://kb.cleverence.ru/wh15/1.6/connecting-to-the-cleverence-database-from-the-1c-server/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-connect-remote-mobile-device-to-warehouse-15-database/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-turn-on-online-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-set-up-directory-exchange-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-update-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-start-with-mobile-device-with-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/receiving-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/pick-and-ship-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/shipment-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/stock-taking-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/write-off-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/goods-return-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/collect-barcodes-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/browse-directories-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/barcode-printing-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/residual-stock-in-cells-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/placement-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/selection-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/aggregation-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/move-to-another-location-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/move-to-another-warehouse-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/packing-list-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/complectation-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/receiving-of-marked-products-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/pick-and-ship-of-marked-products-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/ordering-marking-codes-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/application-of-marking-codes-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/putting-into-circulation-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/write-off-of-marked-codes-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/return-of-marked-goods-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/aggregation-of-marked-goods-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/disaggregation-of-marked-goods-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/printing-duplicate-marking-code/",
-    "https://kb.cleverence.ru/wh15/1.6/action-with-marking-code/",
-    "https://kb.cleverence.ru/wh15/1.6/what-is-warehouse-15-win-ce/",
-    "https://kb.cleverence.ru/wh15/1.6/receiving-in-warehouse-15-win-ce/",
-    "https://kb.cleverence.ru/wh15/1.6/pick-and-ship-in-warehouse-15-win-ce/",
-    "https://kb.cleverence.ru/wh15/1.6/shipment-in-warehouse-15-win-ce/",
-    "https://kb.cleverence.ru/wh15/1.6/stock-taking-in-warehouse-15-win-ce/",
-    "https://kb.cleverence.ru/wh15/1.6/write-off-in-warehouse-15-win-ce/",
-    "https://kb.cleverence.ru/wh15/1.6/collect-barcodes-in-warehouse-15-win-ce/",
-    "https://kb.cleverence.ru/wh15/1.6/placement-in-warehouse-15-win-ce/",
-    "https://kb.cleverence.ru/wh15/1.6/selection-in-warehouse-15-win-ce/",
-    "https://kb.cleverence.ru/wh15/1.6/move-to-another-location-in-warehouse-15-win-ce/",
-    "https://kb.cleverence.ru/wh15/1.6/move-to-another-warehouse-in-warehouse-15-win-ce/",
-    "https://kb.cleverence.ru/wh15/1.6/fast-collect-barcodes-in-warehouse-15-win-ce/",
-    "https://kb.cleverence.ru/wh15/1.6/scan-check-in-warehouse-15-win-ce/",
-    "https://kb.cleverence.ru/wh15/1.6/main-settings-in-warehouse-15-win-ce/",
-    "https://kb.cleverence.ru/wh15/1.6/document-handling-settings-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/what-is-warehouse-15-rfid/",
-    "https://kb.cleverence.ru/wh15/1.6/stock-taking-rfid/",
-    "https://kb.cleverence.ru/wh15/1.6/rfid-marking/",
-    "https://kb.cleverence.ru/wh15/1.6/shipment-rfid/",
-    "https://kb.cleverence.ru/wh15/1.6/search-rfid/",
-    "https://kb.cleverence.ru/wh15/1.6/receiving-rfid/",
-    "https://kb.cleverence.ru/wh15/1.6/binding-of-marking-codes-to-rfid/",
-    "https://kb.cleverence.ru/wh15/1.6/integrated-rfid-tags/",
-    "https://kb.cleverence.ru/wh15/1.6/settings-warehouse-15-rfid/",
-    "https://kb.cleverence.ru/wh15/1.6/settings-on-the-mobile-device-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-delete-diretory-from-mobile-device-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-enter-the-expiration-date-and-production-date-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-choose-a-business-process-on-mobile-device-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-add-a-product-to-document-without-barcode-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-prevent-document-completion-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/what-to-do-with-unknown-barcodes-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-apply-the-same-settings-all-mobile-devices-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/how-data-exchange-occurs-between-warehouse-15-and-1c/",
-    "https://kb.cleverence.ru/wh15/1.6/functionality-of-1c-processing-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/complete-list-supported-1c-configurations-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/alfa-avto-5-1-6-0/",
-    "https://kb.cleverence.ru/wh15/1.6/trade-management-10-3-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/trade-management-11-3-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/trade-management-11-4-11-5-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/erp-enterprise-management-2-2-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/erp-enterprise-management-2-4-2-5-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/integrated-automation-2-2-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/integrated-automation-2-4-2-5-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/trading-enterprise-7-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/management-of-our-small-business-1-6-3-0-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/enterprise-accounting-3-0-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/what-is-a-business-process/",
-    "https://kb.cleverence.ru/wh15/1.6/business-processes-for-receiving-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/business-processes-for-placement-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/business-processes-for-shipment-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/business-processes-for-selection-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/business-processes-for-move-to-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/business-processes-for-stock-taking-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/business-processes-for-write-off-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/business-processes-for-goods-return-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/business-processes-for-production-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/business-processes-for-complectation-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/business-processes-for-packing-list-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/business-processes-for-marked-goods-in-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/business-processes-for-goods-commissioning-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/introduction-in-directory-exchange/",
-    "https://kb.cleverence.ru/wh15/1.6/uploading-directories-on-the-mobile-device/",
-    "https://kb.cleverence.ru/wh15/1.6/adding-new-directories/",
-    "https://kb.cleverence.ru/wh15/1.6/directory-exchange-settings/",
-    "https://kb.cleverence.ru/wh15/1.6/scheduled-export-of-directories/",
-    "https://kb.cleverence.ru/wh15/1.6/introduction-in-exchange-of-documents-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/uploading-documents-to-mobile-device-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/downloading-documents-from-mobile-device-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/regulatory-unloading-of-documents/",
-    "https://kb.cleverence.ru/wh15/1.6/document-exchange-settings/",
-    "https://kb.cleverence.ru/wh15/1.6/how-customize-document-exchange-window-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/viewing-documents-in-1c/",
-    "https://kb.cleverence.ru/wh15/1.6/assigning-document-to-user/",
-    "https://kb.cleverence.ru/wh15/1.6/selecting-documents-by-user/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-work-with-one-document-on-several-mobile-devices/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-enable-sound-notification-on-mobile-device/",
-    "https://kb.cleverence.ru/wh15/1.6/extension-for-tobacco-products-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-restore-document-from-backup/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-setup-document-truncation-by-comment/",
-    "https://kb.cleverence.ru/wh15/1.6/exchange-buttons-in-1c/",
-    "https://kb.cleverence.ru/wh15/1.6/send-a-message-to-technical-support/",
-    "https://kb.cleverence.ru/wh15/1.6/import-and-manage-users/",
-    "https://kb.cleverence.ru/wh15/1.6/printing-labels-and-price-tags/",
-    "https://kb.cleverence.ru/wh15/1.6/assigning-barcode-to-document/",
-    "https://kb.cleverence.ru/wh15/1.6/working-with-volumetric-and-grade-accounting/",
-    "https://kb.cleverence.ru/wh15/1.6/setting-up-database-connection-parameters/",
-    "https://kb.cleverence.ru/wh15/1.6/setting-up-retail-objects/",
-    "https://kb.cleverence.ru/wh15/1.6/business-process-settings/",
-    "https://kb.cleverence.ru/wh15/1.6/sequential-execution-chain-of-business-processes/",
-    "https://kb.cleverence.ru/wh15/1.6/setting-global-parameters/",
-    "https://kb.cleverence.ru/wh15/1.6/setting-up-global-parameters-for-marking/",
-    "https://kb.cleverence.ru/wh15/1.6/advanced-settings/",
-    "https://kb.cleverence.ru/wh15/1.6/setting-up-work-with-marking-codes/",
-    "https://kb.cleverence.ru/wh15/1.6/export-and-import-of-settings/",
-    "https://kb.cleverence.ru/wh15/1.6/1c-configuration-for-working-with-vsd/",
-    "https://kb.cleverence.ru/wh15/1.6/connecting-external-handlers/",
-    "https://kb.cleverence.ru/wh15/1.6/demo-mode-of-handler/",
-    "https://kb.cleverence.ru/wh15/1.6/integration-of-warehouse-15-with-1c-fresh/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-get-new-operations-after-updating/",
-    "https://kb.cleverence.ru/wh15/1.6/what-to-do-document-completed-not-appear/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-place-goods-in-storage-cell-in-warehouse/",
-    "https://kb.cleverence.ru/wh15/1.6/integration-of-warehouse-15-with-wms-total-logistic/",
-    "https://kb.cleverence.ru/wh15/1.6/integration-of-warehouse-15-with-uas-1-4/",
-    "https://kb.cleverence.ru/wh15/1.6/integration-of-warehouse-15-with-excel-csv/",
-    "https://kb.cleverence.ru/wh15/1.6/cleverence-solution-architecture/",
-    "https://kb.cleverence.ru/wh15/1.6/warehouse-15-database-table-structure/",
-    "https://kb.cleverence.ru/wh15/1.6/additional-fields-of-the-aggregation-document/",
-    "https://kb.cleverence.ru/wh15/1.6/structure-of-additional-document-fields/",
-    "https://kb.cleverence.ru/wh15/1.6/structure-of-the-nomenclature-directory/",
-    "https://kb.cleverence.ru/wh15/1.6/integration-recommendations-for-1c/",
-    "https://kb.cleverence.ru/wh15/1.6/integration-handler/",
-    "https://kb.cleverence.ru/wh15/1.6/first-run-of-the-handler/",
-    "https://kb.cleverence.ru/wh15/1.6/running-the-handler-in-offline/",
-    "https://kb.cleverence.ru/wh15/1.6/running-the-handler-in-online/",
-    "https://kb.cleverence.ru/wh15/1.6/calling-arbitrary-functions/",
-    "https://kb.cleverence.ru/wh15/1.6/manual-for-organizing-data-exchange/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-display-data-from-1c-on-a-mobile-device/",
-    "https://kb.cleverence.ru/wh15/1.6/header-fields-display-settings/",
-    "https://kb.cleverence.ru/wh15/1.6/document-search-by-barcode/",
-    "https://kb.cleverence.ru/wh15/1.6/document-fill-handler-configuration/",
-    "https://kb.cleverence.ru/wh15/1.6/document-exchange-via-custom-code/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-set-up-work-with-labeled-products-in-1c/",
-    "https://kb.cleverence.ru/wh15/1.6/1c-integration-manual/",
-    "https://kb.cleverence.ru/wh15/1.6/using-com-objects/",
-    "https://kb.cleverence.ru/wh15/1.6/data-exchange-via-rest-api/",
-    "https://kb.cleverence.ru/wh15/1.6/implementation-of-online-exchange/",
-    "https://kb.cleverence.ru/wh15/1.6/ai-support/",
-    "https://kb.cleverence.ru/wh15/1.6/introduction-in-web-and-http-services/",
-    "https://kb.cleverence.ru/wh15/1.6/cleverence-data-exchange-schemes-via-web-http/",
-    "https://kb.cleverence.ru/wh15/1.6/quick-guide-to-setting-up-cleverence-exchange-with-1c-via-web-http/",
-    "https://kb.cleverence.ru/wh15/1.6/complete-instruction-for-setting-up-cleverence-exchange-with-1c-via-web-and-http/",
-    "https://kb.cleverence.ru/wh15/1.6/connection-setup-with-windows-authentication/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-retrieve-cleverence-objects-in-json-format/",
-    "https://kb.cleverence.ru/wh15/1.6/installing-a-web-service-for-1c-versions-below-8.3.9/",
-    "https://kb.cleverence.ru/wh15/1.6/how-to-set-up-fastest-possible-online/",
-    "https://kb.cleverence.ru/wh15/1.6/glossary-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/faq-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/hints-warnings-and-errors/",
-    "https://kb.cleverence.ru/wh15/1.6/1c-handler-errors/",
-    "https://kb.cleverence.ru/wh15/1.6/update-history-warehouse-15/",
-    "https://kb.cleverence.ru/wh15/1.6/online-with-1c-is-not-working/",
-    "https://kb.cleverence.ru/wh15/1.6/incorrect-path-to-file/",
-    "https://kb.cleverence.ru/wh15/1.6/document-is-not-writing/",
-    "https://kb.cleverence.ru/wh15/1.6/processing-does-not-start-after-update/",
-    "https://kb.cleverence.ru/wh15/1.6/marking-codes-are-not-uploaded/",
-    "https://kb.cleverence.ru/wh15/1.6/error-in-transferring-markings/",
-    "https://kb.cleverence.ru/wh15/1.6/set-up-error-selection-in-1c/",
-    "https://kb.cleverence.ru/wh15/1.6/onlex001/",
-    "https://kb.cleverence.ru/wh15/1.6/onlex002/",
-    "https://kb.cleverence.ru/wh15/1.6/onlex003/",
-    "https://kb.cleverence.ru/wh15/1.6/onlex004/",
-    "https://kb.cleverence.ru/wh15/1.6/onlex005/",
-    "https://kb.cleverence.ru/wh15/1.6/onlex006/",
-    "https://kb.cleverence.ru/wh15/1.6/onlex007/",
-    "https://kb.cleverence.ru/wh15/1.6/intex001/",
-    "https://kb.cleverence.ru/wh15/1.6/mse1005/",
-    "https://kb.cleverence.ru/wh15/1.6/1c-crash/"
+```powershell
+.\.venv\Scripts\python.exe Vector_dev\web_rag.py
+```
+
+Скрипт сам перезапустится через:
+
+```powershell
+python -m streamlit run Vector_dev\web_rag.py
+```
+
+В UI:
+
+1. Укажите `OPENROUTER_API_KEY`.
+2. Укажите папку с кодом в Markdown, например `C:\Base\Document\Cleaned_Markdown`.
+3. Укажите папку официальной документации, например `E:\mcp-ms\mslx-mcp-server\Vector_dev\Official_Docs`.
+4. Нажмите `Индексировать базу`.
+5. Нажмите `Подключить ИИ`.
+
+## Проверка поиска
+
+После индексации:
+
+```powershell
+.\.venv\Scripts\python.exe test_search.py
+.\.venv\Scripts\python.exe test_hybrid.py
+```
+
+Также можно проверить MCP-инструмент:
+
+```json
+{
+  "query": "как обратиться к полю строки документа с русским именем",
+  "n_results": 5,
+  "source_type": "all"
+}
+```
+
+## Частые проблемы
+
+### `Mobile SMARTS syntax checker not found`
+
+Соберите локальный checker:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\MobileSmartsSyntaxChecker\build.ps1
+```
+
+Проверьте `MOBILESMARTS_SYNTAX_CHECKER` в `.env`.
+
+Если checker собран, но не находит `Cleverence.Parsing.dll`, проверьте `MOBILESMARTS_DIR`. Это должна быть папка Mobile SMARTS, где лежит `Cleverence.Parsing.dll`, например:
+
+```text
+E:\MobileSmarts\Desktop
+```
+
+### `setup.bat` не создает `.env`
+
+Убедитесь, что в репозитории есть `.env.example`. Если нет, создайте `.env` вручную:
+
+```env
+OPENROUTER_API_KEY=
+MOBILESMARTS_SYNTAX_CHECKER=E:\mcp-ms\mslx-mcp-server\MobileSmartsSyntaxChecker\bin\MobileSmartsSyntaxChecker.exe
+MOBILESMARTS_DIR=E:\MobileSmarts\Desktop
+```
+
+### Qdrant не отвечает
+
+```powershell
+docker ps
+docker-compose up -d
+curl http://localhost:6333/collections
+```
+
+### RAG ничего не находит
+
+Проверьте:
+
+- Qdrant запущен;
+- коллекция `mobilesmarts_knowledge` создана;
+- в UI нажата кнопка `Индексировать базу`;
+- пути к `Cleaned_Markdown` и `Official_Docs` существуют;
+- `OPENROUTER_API_KEY` корректен.
+
+### Русские поля падают в `validate_mslx_syntax`
+
+В актуальной версии `server.py` payload в checker отправляется как ASCII JSON с `\uXXXX`, поэтому выражения вида `item.номер` и `SelectedLine.номер` проходят синтаксическую проверку. Если ошибка повторяется, проверьте, что MCP-клиент запущен именно из обновленного репозитория.
+
+## Правила безопасности для доработок
+
+- Не редактировать глобальную операцию напрямую: сначала копия с префиксом `ds_`.
+- Не выбирать операцию по имени: сначала reachability-граф от типа документа.
+- Пустой `find_usages` — блокер.
+- Новые переменные, параметры и узлы начинать с `ds_`.
+- Нетиповой код маркировать в атрибуте `comment`: `Нетиповой код ds++ <дата>`.
+- Не писать комментарии внутри `expression`.
+- Не использовать C#-циклы внутри `expression`; использовать XML-узлы процесса.
+- Перед записью выражений сверяться со словарем синтаксиса и `validate_mslx_syntax`.
+
+## Команды для разработчика
+
+```powershell
+.\.venv\Scripts\python.exe -m py_compile server.py
+git status --short
+git diff -- server.py SystemPrompt.md README.md
+```
+
+Для запуска MCP Inspector используйте режим HTTP или SSE и подключайтесь к локальному URL.

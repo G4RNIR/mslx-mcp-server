@@ -216,8 +216,14 @@ with st.sidebar:
             
             # Собираем пути из интерфейса
             folders_to_index = {
-                code_dir_input: "Исходный код проекта",
-                docs_dir_input: "Официальная документация"
+                code_dir_input: {
+                    "source_type": "code",
+                    "source_label": "Исходный код проекта"
+                },
+                docs_dir_input: {
+                    "source_type": "official",
+                    "source_label": "Официальная документация"
+                }
             }
             
             all_chunks = []
@@ -228,10 +234,12 @@ with st.sidebar:
             )
             
             # Пробегаемся по папкам, указанным в UI
-            for folder_path, source_type in folders_to_index.items():
+            for folder_path, source_info in folders_to_index.items():
                 if not folder_path.strip(): # Пропускаем, если поле оставили пустым
                     continue
-                    
+
+                source_type = source_info["source_type"]
+                source_label = source_info["source_label"]
                 target_dir = Path(folder_path)
                 if target_dir.exists():
                     st.info(f"📁 Читаем папку: {folder_path}...")
@@ -248,7 +256,8 @@ with st.sidebar:
                         # Добавляем метаданные
                         for chunk in chunks:
                             chunk.metadata['source_type'] = source_type
-                            chunk.metadata['folder'] = folder_path
+                            chunk.metadata['source_label'] = source_label
+                            chunk.metadata['folder'] = str(target_dir.resolve())
                         all_chunks.extend(chunks)
                         st.write(f"Найдено {len(chunks)} фрагментов в {folder_path}")
                 else:
