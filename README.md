@@ -72,7 +72,7 @@ MOBILESMARTS_DIR=E:\MobileSmarts\Desktop
 1. Клонируйте репозиторий:
 
 ```powershell
-git clone <repo-url> E:\mcp-ms\mslx-mcp-server
+git clone https://github.com/G4RNIR/mslx-mcp-server E:\mcp-ms\mslx-mcp-server
 cd E:\mcp-ms\mslx-mcp-server
 ```
 
